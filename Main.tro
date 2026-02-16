@@ -1,0 +1,410 @@
+var
+  MainForm, AddForm, DetailForm: TclForm;
+  HeaderPnl, FooterPnl, TopRowPnl: TclProPanel;
+  AddTaskBtn, SaveBtn: TclProButton;
+  
+  TaskScrollBox: TclVertScrollBox;
+  
+  d_LblTitle, d_LblDesc, d_LblDate, d_LblStatus, d_LblInfo: TclProLabel;
+  d_SliderContainer, d_SliderBar, d_SliderKnob, d_HeaderContainer, d_InfoContainer: TclProPanel;
+  d_YuzdeLbl: TclProLabel;
+  d_Surukleniyor: Boolean;
+  d_HedefX: Integer;
+
+  TaskNameEdt, TaskDescEdt, TaskControlEdt, TaskWorkerEdt, TaskDateEdt: TclEdit;
+  
+  TitleLbl, SubTitleLbl: TclProLabel;
+  TitleIcon: TclProImage;
+  
+  selID, queryStr: string;
+  isEditMode: Boolean;
+
+// --- 1. VERİTABANI BAĞLANTISI ---
+void SetupDatabase;
+{
+  try
+    Clomosy.DBSQLiteConnect(Clomosy.AppFilesPath + 'yonetici.db3', '');
+    
+    Clomosy.DBSQLiteQuery.SQL.Text = 
+      'CREATE TABLE IF NOT EXISTS MyTasks (' +
+      'id INTEGER PRIMARY KEY AUTOINCREMENT,' +
+      'task_name TEXT, task_desc TEXT, task_worker TEXT, ' +
+      'task_control TEXT, task_date TEXT, task_progress INTEGER DEFAULT 0)';
+    Clomosy.DBSQLiteQuery.OpenOrExecute;
+    
+    try
+      Clomosy.DBSQLiteQuery.SQL.Text = 'ALTER TABLE MyTasks ADD COLUMN task_progress INTEGER DEFAULT 0';
+      Clomosy.DBSQLiteQuery.OpenOrExecute;
+    except
+    }
+  except
+    ShowMessage('Veritabanı Hatası: ' + LastExceptionMessage);
+  }
+}
+
+// --- 2. FONKSİYON TANIMLAMALARI ---
+void RefreshTaskList; forward; 
+
+// --- 3. DETAY EKRANI VE SLIDER İŞLEMLERİ ---
+void d_PozisyonuUygula;
+var MaksimumMesafe, Yuzde: Integer;
+{
+  MaksimumMesafe = d_SliderContainer.Width - d_SliderKnob.Width;
+  if (d_HedefX < 0) d_HedefX = 0;
+  if (d_HedefX > MaksimumMesafe) d_HedefX = MaksimumMesafe;
+  
+  d_SliderKnob.Left = d_HedefX;
+  d_SliderBar.Width = d_HedefX + (d_SliderKnob.Width/2);
+  
+  if (MaksimumMesafe > 0) Yuzde = Round((d_HedefX / MaksimumMesafe) * 100); else Yuzde = 0;
+  d_YuzdeLbl.Text = '%' + IntToStr(Yuzde);
+}
+
+void d_KaydetProgress;
+var MaksimumMesafe, Yuzde: Integer;
+{
+  MaksimumMesafe = d_SliderContainer.Width - d_SliderKnob.Width;
+  if (MaksimumMesafe > 0) Yuzde = Round((d_SliderKnob.Left / MaksimumMesafe) * 100); else Yuzde = 0;
+  
+  try
+    Clomosy.DBSQLiteQuery.SQL.Text = 'UPDATE MyTasks SET task_progress = ' + IntToStr(Yuzde) + ' WHERE id = ' + selID;
+    Clomosy.DBSQLiteQuery.OpenOrExecute;
+    RefreshTaskList; 
+  except
+  }
+}
+
+void d_OlaySuruklemeBasladi; { d_Surukleniyor = True; }
+void d_OlaySuruklemeBitti; { d_Surukleniyor = False; d_KaydetProgress; }
+
+void d_OlayMouseHareket; 
+{ 
+  if (d_Surukleniyor) {
+    d_HedefX = d_SliderKnob.Left + DetailForm.clSenderMousePosX - (d_SliderKnob.Width/2);
+    d_PozisyonuUygula;
+  }
+}
+
+void OpenDetailForm;
+var CurrentProgress, MaxWidth: Integer;
+{
+  DetailForm = TclForm.Create(Self);
+  DetailForm.clSetCaption('Görev Detayı');
+  DetailForm.SetFormColor('#F9FAFB', '', clGNone);
+  
+  Clomosy.DBSQLiteQuery.Close;
+  Clomosy.DBSQLiteQuery.SQL.Text = 'SELECT * FROM MyTasks WHERE id = ' + selID;
+  Clomosy.DBSQLiteQuery.OpenOrExecute;
+  
+  // Header Alanı
+  d_HeaderContainer = DetailForm.AddNewProPanel(DetailForm, 'd_HeaderContainer');
+  d_HeaderContainer.Align = alTop; d_HeaderContainer.Height = 120; 
+  d_HeaderContainer.clProSettings.BackgroundColor = clAlphaColor.clWhite; 
+  d_HeaderContainer.SetclProSettings(d_HeaderContainer.clProSettings);
+
+  d_LblTitle = DetailForm.AddNewProLabel(d_HeaderContainer, 'd_LblTitle', Clomosy.DBSQLiteQuery.FieldByName('task_name').AsString);
+  d_LblTitle.Align = alTop; d_LblTitle.Margins.Top = 10; d_LblTitle.Margins.Left = 20; d_LblTitle.Height = 30; 
+  d_LblTitle.clProSettings.FontSize = 22; d_LblTitle.clProSettings.FontColor = clAlphaColor.clBlack; d_LblTitle.clProSettings.TextSettings.Font.Style = [fsBold];
+  d_LblTitle.SetclProSettings(d_LblTitle.clProSettings);
+  
+  d_LblDesc = DetailForm.AddNewProLabel(d_HeaderContainer, 'd_LblDesc', Clomosy.DBSQLiteQuery.FieldByName('task_desc').AsString);
+  d_LblDesc.Align = alClient; d_LblDesc.Margins.Left = 20; d_LblDesc.Margins.Top = 5;
+  d_LblDesc.clProSettings.FontSize = 14; d_LblDesc.clProSettings.FontColor = clAlphaColor.clGray; 
+  d_LblDesc.SetclProSettings(d_LblDesc.clProSettings);
+
+  // Bilgi Alanı
+  d_InfoContainer = DetailForm.AddNewProPanel(DetailForm, 'd_InfoContainer');
+  d_InfoContainer.Align = alTop; d_InfoContainer.Height = 120; d_InfoContainer.Margins.Top = 10;
+  d_InfoContainer.clProSettings.BackgroundColor = clAlphaColor.clWhite; 
+  d_InfoContainer.SetclProSettings(d_InfoContainer.clProSettings);
+
+  d_LblDate = DetailForm.AddNewProLabel(d_InfoContainer, 'd_LblDate', 'Teslim: ' + Clomosy.DBSQLiteQuery.FieldByName('task_date').AsString);
+  d_LblDate.Align = alTop; d_LblDate.Margins.Top=10; d_LblDate.Margins.Left=20; d_LblDate.Height=25;
+  d_LblDate.clProSettings.FontSize = 16; d_LblDate.clProSettings.FontColor = clAlphaColor.clHexToColor('#059669'); 
+  d_LblDate.SetclProSettings(d_LblDate.clProSettings);
+  
+  d_LblInfo = DetailForm.AddNewProLabel(d_InfoContainer, 'd_LblInfo', 'Sorumlu: ' + Clomosy.DBSQLiteQuery.FieldByName('task_worker').AsString + #13 + 'Kontrol: ' + Clomosy.DBSQLiteQuery.FieldByName('task_control').AsString);
+  d_LblInfo.Align = alClient; d_LblInfo.Margins.Left=20; d_LblInfo.Margins.Top=5;
+  d_LblInfo.clProSettings.FontSize = 14; d_LblInfo.clProSettings.FontColor = clAlphaColor.clHexToColor('#374151');
+  d_LblInfo.SetclProSettings(d_LblInfo.clProSettings);
+
+  // Slider Başlığı
+  d_LblStatus = DetailForm.AddNewProLabel(DetailForm, 'd_LblStatus', 'İlerleme Durumu');
+  d_LblStatus.Align = alTop; d_LblStatus.Margins.Top = 20; d_LblStatus.Margins.Left = 20; d_LblStatus.Height = 30;
+  d_LblStatus.clProSettings.FontSize = 14; d_LblStatus.clProSettings.FontColor = clAlphaColor.clBlack;
+  d_LblStatus.SetclProSettings(d_LblStatus.clProSettings);
+
+  // Slider Alanı
+  d_YuzdeLbl = DetailForm.AddNewProLabel(DetailForm, 'd_YuzdeLbl', '%0');
+  d_YuzdeLbl.Align = alTop; d_YuzdeLbl.Height = 30; d_YuzdeLbl.Margins.Right=20;
+  clComponent.SetupComponent(d_YuzdeLbl, '{"TextHorizontalAlign":"right", "FontSize":18, "TextColor":"#2563EB", "TextBold":"yes"}');
+  
+  d_SliderContainer = DetailForm.AddNewProPanel(DetailForm, 'd_SliderContainer');
+  d_SliderContainer.Align = alTop; d_SliderContainer.Height = 20; d_SliderContainer.Margins.Left=20; d_SliderContainer.Margins.Right=20;
+  d_SliderContainer.clProSettings.BackgroundColor = clAlphaColor.clHexToColor('#E5E7EB'); d_SliderContainer.clProSettings.RoundHeight=10; d_SliderContainer.clProSettings.RoundWidth=10; d_SliderContainer.SetclProSettings(d_SliderContainer.clProSettings);
+  
+  d_SliderBar = DetailForm.AddNewProPanel(d_SliderContainer, 'd_SliderBar');
+  d_SliderBar.Align = alLeft; d_SliderBar.Width=0; d_SliderBar.clProSettings.BackgroundColor = clAlphaColor.clHexToColor('#2563EB'); d_SliderBar.clProSettings.RoundHeight=10; d_SliderBar.clProSettings.RoundWidth=10; d_SliderBar.SetclProSettings(d_SliderBar.clProSettings);
+  
+  d_SliderKnob = DetailForm.AddNewProPanel(d_SliderContainer, 'd_SliderKnob');
+  d_SliderKnob.Align = alNone; d_SliderKnob.Width=30; d_SliderKnob.Height=30; d_SliderKnob.Top = -5;
+  d_SliderKnob.clProSettings.BackgroundColor = clAlphaColor.clWhite; d_SliderKnob.clProSettings.BorderColor=clAlphaColor.clHexToColor('#2563EB'); d_SliderKnob.clProSettings.BorderWidth=2; d_SliderKnob.clProSettings.RoundHeight=15; d_SliderKnob.clProSettings.RoundWidth=15; d_SliderKnob.SetclProSettings(d_SliderKnob.clProSettings);
+  
+  DetailForm.AddNewEvent(d_SliderKnob, tbeOnMouseDown, 'd_OlaySuruklemeBasladi');
+  DetailForm.AddNewEvent(d_SliderKnob, tbeOnMouseUp, 'd_OlaySuruklemeBitti');
+  DetailForm.AddNewEvent(d_SliderKnob, tbeOnMouseMove, 'd_OlayMouseHareket');
+  
+  CurrentProgress = Clomosy.DBSQLiteQuery.FieldByName('task_progress').AsInteger;
+  d_YuzdeLbl.Text = '%' + IntToStr(CurrentProgress);
+  MaxWidth = DetailForm.clWidth - 40 - 30;
+  if (MaxWidth > 0) d_HedefX = (CurrentProgress * MaxWidth) / 100; else d_HedefX = 0;
+  d_SliderKnob.Left = d_HedefX; d_SliderBar.Width = d_HedefX + 15;
+  
+  DetailForm.Run;
+}
+
+// --- 4. KAYDETME ---
+void SaveTask;
+{
+  if (TaskNameEdt.Text == '') { ShowMessage('Ad Giriniz'); exit; }
+  try
+    if (isEditMode) {
+      queryStr = 'UPDATE MyTasks SET task_name='''+TaskNameEdt.Text+''', task_desc='''+TaskDescEdt.Text+''', task_worker='''+TaskWorkerEdt.Text+''', task_control='''+TaskControlEdt.Text+''', task_date='''+TaskDateEdt.Text+''' WHERE id='+selID;
+    } else {
+      queryStr = 'INSERT INTO MyTasks (task_name, task_desc, task_worker, task_control, task_date, task_progress) VALUES ('''+TaskNameEdt.Text+''','''+TaskDescEdt.Text+''','''+TaskWorkerEdt.Text+''','''+TaskControlEdt.Text+''','''+TaskDateEdt.Text+''', 0)';
+    }
+    Clomosy.DBSQLiteQuery.SQL.Text = queryStr;
+    Clomosy.DBSQLiteQuery.OpenOrExecute;
+    AddForm.clHide;
+    RefreshTaskList; 
+  except
+    ShowMessage('Hata: ' + LastExceptionMessage);
+  }
+}
+
+void OpenAddTaskForm; 
+{
+  AddForm = TclForm.Create(Self);
+  AddForm.clSetCaption('Görev Formu');
+  
+  TaskNameEdt = AddForm.AddNewProEdit(AddForm, 'TaskNameEdt', 'Görev Adı'); TaskNameEdt.Align = alTop; TaskNameEdt.Height=50;
+  TaskDescEdt = AddForm.AddNewProEdit(AddForm, 'TaskDescEdt', 'Açıklama'); TaskDescEdt.Align = alTop; TaskDescEdt.Height=50;
+  TaskDateEdt = AddForm.AddNewProEdit(AddForm, 'TaskDateEdt', 'Tarih (GG.AA.YYYY)'); TaskDateEdt.Align = alTop; TaskDateEdt.Height=50;
+  TaskControlEdt = AddForm.AddNewProEdit(AddForm, 'TaskControlEdt', 'Kontrolör'); TaskControlEdt.Align = alTop; TaskControlEdt.Height=50;
+  TaskWorkerEdt = AddForm.AddNewProEdit(AddForm, 'TaskWorkerEdt', 'Yapan Kişi'); TaskWorkerEdt.Align = alTop; TaskWorkerEdt.Height=50;
+  
+  SaveBtn = AddForm.AddNewProButton(AddForm, 'SaveBtn', 'KAYDET'); SaveBtn.Align = alBottom; SaveBtn.Height=50;
+  clComponent.SetupComponent(SaveBtn, '{"BackgroundColor":"#2563EB", "TextColor":"#FFFFFF", "RoundHeight":10}');
+  AddForm.AddNewEvent(SaveBtn, tbeOnClick, 'SaveTask');
+}
+
+// --- 5. BUTON TIKLAMA OLAYLARI ---
+
+void BtnEditClick;
+{
+  selID = TclProButton(MainForm.clSender).clTagStr; 
+  isEditMode = True;
+  OpenAddTaskForm;
+  
+  Clomosy.DBSQLiteQuery.SQL.Text = 'SELECT * FROM MyTasks WHERE id = ' + selID;
+  Clomosy.DBSQLiteQuery.OpenOrExecute;
+  TaskNameEdt.Text = Clomosy.DBSQLiteQuery.FieldByName('task_name').AsString;
+  TaskDescEdt.Text = Clomosy.DBSQLiteQuery.FieldByName('task_desc').AsString;
+  TaskWorkerEdt.Text = Clomosy.DBSQLiteQuery.FieldByName('task_worker').AsString;
+  TaskControlEdt.Text = Clomosy.DBSQLiteQuery.FieldByName('task_control').AsString;
+  TaskDateEdt.Text = Clomosy.DBSQLiteQuery.FieldByName('task_date').AsString;
+  AddForm.Run;
+}
+
+void BtnDeleteClick;
+{
+  selID = TclProButton(MainForm.clSender).clTagStr;
+  try
+    if (Clomosy.Ask('Silmek istiyor musunuz?')) {
+        Clomosy.DBSQLiteQuery.SQL.Text = 'DELETE FROM MyTasks WHERE id = ' + selID;
+        Clomosy.DBSQLiteQuery.OpenOrExecute;
+        RefreshTaskList;
+    }
+  except
+    ShowMessage('Silinemedi');
+  }
+}
+
+void BtnDetailClick;
+{
+  selID = TclProButton(MainForm.clSender).clTagStr;
+  OpenDetailForm;
+}
+
+void newTaskClick;
+{
+  isEditMode = False;
+  OpenAddTaskForm;
+  AddForm.Run;
+}
+
+// --- 6. DİNAMİK LİSTE OLUŞTURMA (ÖNEMLİ KISIM) ---
+void RefreshTaskList;
+var
+  CardPnl, TopLayout, DateBandPnl, BottomLayout: TclProPanel;
+  LblName, LblDateTxt, LblDaysLeft, LblWorker, LblPercent, LblDesc: TclProLabel;
+  BtnEdit, BtnDel, BtnDet: TclProButton;
+  ProgBarBack, ProgBarFront: TclProPanel;
+  CurrentProg, DaysDiff: Integer;
+  DaysText, BandColor, TextColor: String;
+{
+  if (TaskScrollBox <> nil) {
+    TaskScrollBox.Free;
+    TaskScrollBox = nil;
+  }
+  
+  TaskScrollBox = MainForm.AddNewVertScrollBox(FooterPnl, 'TaskScrollBox');
+  TaskScrollBox.Align = alClient;
+  
+  Clomosy.DBSQLiteQuery.Close;
+  // Gün farkını SQL ile hesaplıyoruz
+  Clomosy.DBSQLiteQuery.SQL.Text = 
+    'SELECT *, CAST(julianday(substr(task_date,7,4) || ''-'' || substr(task_date,4,2) || ''-'' || substr(task_date,1,2)) - julianday(''now'') AS INTEGER) as days_left ' +
+    'FROM MyTasks ORDER BY id DESC';
+  Clomosy.DBSQLiteQuery.OpenOrExecute;
+  
+  while (not Clomosy.DBSQLiteQuery.Eof)
+  {
+    CardPnl = MainForm.AddNewProPanel(TaskScrollBox, 'Card_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString);
+    CardPnl.Align = alTop;
+    CardPnl.Height = 220; 
+    CardPnl.Margins.Top = 15; CardPnl.Margins.Left = 15; CardPnl.Margins.Right = 15;
+    CardPnl.clProSettings.BackgroundColor = clAlphaColor.clWhite;
+    CardPnl.clProSettings.RoundHeight = 15; CardPnl.clProSettings.RoundWidth = 15;
+    CardPnl.clProSettings.BorderColor = clAlphaColor.clHexToColor('#E2E8F0');
+    CardPnl.clProSettings.BorderWidth = 1;
+    CardPnl.SetclProSettings(CardPnl.clProSettings);
+    
+    // 2. BAŞLIK
+    TopLayout = MainForm.AddNewProPanel(CardPnl, 'Top_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString);
+    TopLayout.Align = alTop; TopLayout.Height = 40; 
+    TopLayout.clProSettings.BackgroundColor = clAlphaColor.clWhite; TopLayout.SetclProSettings(TopLayout.clProSettings);
+    
+    LblName = MainForm.AddNewProLabel(TopLayout, 'Lbl_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, Clomosy.DBSQLiteQuery.FieldByName('task_name').AsString);
+    LblName.Align = alLeft; LblName.Width = 200; LblName.Margins.Left = 10;
+    LblName.clProSettings.FontSize = 18; LblName.clProSettings.FontColor = clAlphaColor.clHexToColor('#1E293B'); LblName.clProSettings.TextSettings.Font.Style = [fsBold];
+    LblName.SetclProSettings(LblName.clProSettings);
+    
+    // --- 3. YENİ: TARİH ŞERİDİ (DATE BAR) ---
+    DaysDiff = Clomosy.DBSQLiteQuery.FieldByName('days_left').AsInteger;
+    if (DaysDiff < 3) { 
+        DaysText = IntToStr(DaysDiff) + ' gün kaldı!'; 
+        BandColor = '#FEE2E2'; // Açık Kırmızı
+        TextColor = '#DC2626'; // Koyu Kırmızı
+    } else { 
+        DaysText = IntToStr(DaysDiff) + ' gün kaldı'; 
+        BandColor = '#DCFCE7'; // Açık Yeşil
+        TextColor = '#15803D'; // Koyu Yeşil
+    }
+    if (DaysDiff < 0) { DaysText = 'Süre Doldu'; BandColor = '#FECACA'; TextColor = '#B91C1C'; }
+
+    DateBandPnl = MainForm.AddNewProPanel(CardPnl, 'DBand_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString);
+    DateBandPnl.Align = alTop; DateBandPnl.Height = 30; 
+    DateBandPnl.Margins.Left = 10; DateBandPnl.Margins.Right = 10; DateBandPnl.Margins.Top = 5;
+    DateBandPnl.clProSettings.BackgroundColor = clAlphaColor.clHexToColor(BandColor);
+    DateBandPnl.clProSettings.RoundHeight = 8; DateBandPnl.clProSettings.RoundWidth = 8;
+    DateBandPnl.SetclProSettings(DateBandPnl.clProSettings);
+    
+    // Sol: Tarih
+    LblDateTxt = MainForm.AddNewProLabel(DateBandPnl, 'DtTxt_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, '📅 ' + Clomosy.DBSQLiteQuery.FieldByName('task_date').AsString);
+    LblDateTxt.Align = alLeft; LblDateTxt.Width = 120; LblDateTxt.Margins.Left = 10;
+    clComponent.SetupComponent(LblDateTxt, '{"TextColor":"'+TextColor+'", "TextSize":12, "TextBold":"yes"}');
+    
+    // Sağ: Kalan Gün
+    LblDaysLeft = MainForm.AddNewProLabel(DateBandPnl, 'DLft_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, DaysText);
+    LblDaysLeft.Align = alRight; LblDaysLeft.Width = 100; LblDaysLeft.Margins.Right = 10;
+    clComponent.SetupComponent(LblDaysLeft, '{"TextHorizontalAlign":"right", "TextColor":"'+TextColor+'", "TextSize":12, "TextBold":"yes"}');
+    
+    LblDesc = MainForm.AddNewProLabel(CardPnl, 'Desc_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, Clomosy.DBSQLiteQuery.FieldByName('task_desc').AsString);
+    LblDesc.Align = alTop; LblDesc.Height = 40; LblDesc.Margins.Left = 10; LblDesc.Margins.Right = 10;
+    clComponent.SetupComponent(LblDesc, '{"TextColor":"#64748B", "TextSize":13, "TextVerticalAlign":"top"}');
+
+    // 4. KİŞİLER
+    LblWorker = MainForm.AddNewProLabel(CardPnl, 'Wrk_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, 
+        'Sorumlu: ' + Clomosy.DBSQLiteQuery.FieldByName('task_worker').AsString + ' | Kontrol: ' + Clomosy.DBSQLiteQuery.FieldByName('task_control').AsString);
+    LblWorker.Align = alTop; LblWorker.Height=25; LblWorker.Margins.Left=10; LblWorker.Margins.Top=5;
+    clComponent.SetupComponent(LblWorker, '{"TextColor":"#475569", "TextSize":11}');
+
+    // 5. PROGRESS BAR
+    ProgBarBack = MainForm.AddNewProPanel(CardPnl, 'PbBack_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString);
+    ProgBarBack.Align = alTop; ProgBarBack.Height = 8; 
+    ProgBarBack.Margins.Top=5; ProgBarBack.Margins.Left=10; ProgBarBack.Margins.Right=10;
+    ProgBarBack.clProSettings.BackgroundColor = clAlphaColor.clHexToColor('#F1F5F9'); ProgBarBack.clProSettings.RoundHeight=4; ProgBarBack.clProSettings.RoundWidth=4;
+    ProgBarBack.SetclProSettings(ProgBarBack.clProSettings);
+    
+    CurrentProg = Clomosy.DBSQLiteQuery.FieldByName('task_progress').AsInteger;
+    ProgBarFront = MainForm.AddNewProPanel(ProgBarBack, 'PbFront_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString);
+    ProgBarFront.Align = alLeft; 
+    ProgBarFront.Width = (CurrentProg * 3); 
+    ProgBarFront.clProSettings.BackgroundColor = clAlphaColor.clHexToColor('#2563EB'); // Mavi
+    ProgBarFront.clProSettings.RoundHeight=4; ProgBarFront.clProSettings.RoundWidth=4;
+    ProgBarFront.SetclProSettings(ProgBarFront.clProSettings);
+    
+    // Yüzde Yazısı
+    LblPercent = MainForm.AddNewProLabel(CardPnl, 'Prc_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, '%'+IntToStr(CurrentProg));
+    LblPercent.Align = alTop; LblPercent.Height=15; LblPercent.Margins.Right=15;
+    clComponent.SetupComponent(LblPercent, '{"TextHorizontalAlign":"right", "TextColor":"#2563EB", "TextSize":10, "TextBold":"yes"}');
+
+    // 6. BUTONLAR
+    BottomLayout = MainForm.AddNewProPanel(CardPnl, 'Btns_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString);
+    BottomLayout.Align = alBottom; BottomLayout.Height = 45; BottomLayout.Margins.Bottom = 10;
+    BottomLayout.clProSettings.BackgroundColor = clAlphaColor.clWhite; BottomLayout.SetclProSettings(BottomLayout.clProSettings);
+    
+    BtnDet = MainForm.AddNewProButton(BottomLayout, 'Det_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, 'Detay');
+    BtnDet.Align = alLeft; BtnDet.Width = 70; BtnDet.Margins.Left = 10; 
+    BtnDet.clTagStr = Clomosy.DBSQLiteQuery.FieldByName('id').AsString;
+    clComponent.SetupComponent(BtnDet, '{"BackgroundColor":"#8B5CF6", "TextColor":"#FFFFFF", "RoundHeight":8, "RoundWidth":8, "TextSize":11, "TextBold":"yes"}');
+    MainForm.AddNewEvent(BtnDet, tbeOnClick, 'BtnDetailClick');
+
+    BtnDel = MainForm.AddNewProButton(BottomLayout, 'Del_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, 'Sil');
+    BtnDel.Align = alRight; BtnDel.Width = 60; BtnDel.Margins.Right = 10;
+    BtnDel.clTagStr = Clomosy.DBSQLiteQuery.FieldByName('id').AsString;
+    clComponent.SetupComponent(BtnDel, '{"BackgroundColor":"#EF4444", "TextColor":"#FFFFFF", "RoundHeight":8, "RoundWidth":8, "TextSize":11, "TextBold":"yes"}');
+    MainForm.AddNewEvent(BtnDel, tbeOnClick, 'BtnDeleteClick');
+
+    BtnEdit = MainForm.AddNewProButton(BottomLayout, 'Edt_' + Clomosy.DBSQLiteQuery.FieldByName('id').AsString, 'Düzenle');
+    BtnEdit.Align = alRight; BtnEdit.Width = 70; BtnEdit.Margins.Right = 5;
+    BtnEdit.clTagStr = Clomosy.DBSQLiteQuery.FieldByName('id').AsString;
+    clComponent.SetupComponent(BtnEdit, '{"BackgroundColor":"#3B82F6", "TextColor":"#FFFFFF", "RoundHeight":8, "RoundWidth":8, "TextSize":11, "TextBold":"yes"}');
+    MainForm.AddNewEvent(BtnEdit, tbeOnClick, 'BtnEditClick');
+
+    Clomosy.DBSQLiteQuery.Next;
+  }
+}
+
+// --- 7. BAŞLATMA ---
+{
+  MainForm = TclForm.Create(Self);
+  SetupDatabase;
+  
+  HeaderPnl = MainForm.AddNewProPanel(MainForm, 'HeaderPnl');
+  HeaderPnl.Align = alTop; HeaderPnl.Height = 80; 
+  HeaderPnl.clProSettings.BackgroundColor = clAlphaColor.clHexToColor('#FFFFFF');
+  HeaderPnl.SetclProSettings(HeaderPnl.clProSettings);
+  
+  TitleIcon = MainForm.AddNewProImage(HeaderPnl, 'TitleIcon');
+  TitleIcon.Align = alLeft; TitleIcon.Width = 40; TitleIcon.Height = 40; TitleIcon.Margins.Left = 20; TitleIcon.Margins.Top = 20;
+  MainForm.setImage(TitleIcon, 'https://static.vecteezy.com/system/resources/previews/056/952/041/non_2x/queue-simple-music-player-button-vector.jpg');
+
+  TitleLbl = MainForm.AddNewProLabel(HeaderPnl, 'TitleLbl', 'Görev Yöneticisi');
+  TitleLbl.Align = alLeft; TitleLbl.Margins.Left=10; TitleLbl.Margins.Top=25; TitleLbl.Width=150;
+  TitleLbl.clProSettings.FontSize=18; TitleLbl.clProSettings.FontColor=clAlphaColor.clHexToColor('#111827'); TitleLbl.clProSettings.TextSettings.Font.Style=[fsBold];
+  TitleLbl.SetclProSettings(TitleLbl.clProSettings);
+  
+  AddTaskBtn = MainForm.AddNewProButton(HeaderPnl, 'AddTaskBtn', '+ Yeni');
+  AddTaskBtn.Align = alRight; AddTaskBtn.Width=80; AddTaskBtn.Height=40; AddTaskBtn.Margins.Right=20; AddTaskBtn.Margins.Top=20;
+  clComponent.SetupComponent(AddTaskBtn, '{"BackgroundColor":"#2563EB", "TextColor":"#FFFFFF", "RoundHeight":10}');
+  MainForm.AddNewEvent(AddTaskBtn, tbeOnClick, 'newTaskClick');
+  
+  FooterPnl = MainForm.AddNewProPanel(MainForm, 'FooterPnl');
+  FooterPnl.Align = alClient; FooterPnl.clProSettings.BackgroundColor = clAlphaColor.clHexToColor('#F1F5F9'); 
+  FooterPnl.SetclProSettings(FooterPnl.clProSettings);
+  
+  RefreshTaskList;
+  MainForm.Run;
+}
